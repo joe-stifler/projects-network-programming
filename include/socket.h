@@ -32,7 +32,7 @@ namespace sock {
         public:
             struct sockaddr_in addr;
 
-            SocketAddr(int family, char *address, int port) {
+            SocketAddr(int family, const char *address, int port) {
                 /* 
                     Setamos a estrutura inteira addr para 0
 
@@ -86,7 +86,7 @@ namespace sock {
                 addr.sin_addr.s_addr = htonl(_addr);
             }
 
-            void setInAddress(char *_addr_str) {
+            void setInAddress(const char *_addr_str) {
                 /* 
                     a função inet_pton (presentation to numeric) é usada para converter
                     o IP do servidor passado pelo usuário no formato de string IPV4, 
@@ -294,7 +294,7 @@ namespace sock {
             convertemos `local_addr.sin_addr` de um valor binário para uma
             string no padrão IPv4
         */
-        inet_ntop(AF_INET, &local_addr.sin_addr, local_ip, sizeof(local_ip));
+        inet_ntop(AF_INET, &local_addr.sin_addr, local_ip, 16 * sizeof(char));
 
         /* 
             converte a ordem do inteiro representando a porta local do cliente, 
@@ -368,6 +368,18 @@ namespace sock {
         }
     }
 
+    void writeDenyMsg2(int sockfd, int idCli) {
+        if (sockfd >= 0) {
+            auto status = sock::DenyMsg;
+            
+            // send message to peer (to start a new game)
+            sock::Write(sockfd, (char *) &status, sizeof(status));
+
+            // send to peer the id of client i
+            sock::Write(sockfd, (char *) &idCli, sizeof(idCli));
+        }
+    }
+
     void writeNewGameMsg(int sockfd, int idCli) {
         if (sockfd >= 0) {
             auto status = sock::NewGameMsg;
@@ -382,28 +394,53 @@ namespace sock {
 
     void readNewGameMsg(int sockfd, int &idCli) {
         if (sockfd >= 0) {
-            auto status = sock::NewGameMsg;
-            
-            // send message to peer (to start a new game)
-            sock::Read(sockfd, (char *) &status, sizeof(status));
-
             // send to peer the id of client i
             sock::Read(sockfd, (char *) &idCli, sizeof(idCli));
         }
     }
 
-    void writeAcceptMsg(int sockfd, std::string address) {
+    void writeAcceptMsg(int sockfd, std::string address, int randNum) {
         if (sockfd >= 0) {
             auto status = sock::AcceptMsg;
 
             // send message (with address of peer) to client to start game
             sock::Write(sockfd, (char *) &status, sizeof(status));
 
+            sock::Write(sockfd, (char *) &randNum, sizeof(randNum));
+
             auto len = (int) address.size();
 
             sock::Write(sockfd, (char *) &len, sizeof(len));
 
             sock::Write(sockfd, (char *) address.c_str(), len * sizeof(char));
+        }
+    }
+
+    void writeAcceptMsg2(int sockfd, int idCli) {
+        if (sockfd >= 0) {
+            auto status = sock::AcceptMsg;
+            
+            // send message to peer (to start a new game)
+            sock::Write(sockfd, (char *) &status, sizeof(status));
+
+            // send to peer the id of client i
+            sock::Write(sockfd, (char *) &idCli, sizeof(idCli));
+        }
+    }
+
+    void readAcceptMsg(int sockfd, char *recvline, std::string &address, int &randNum) {
+        if (sockfd >= 0) {
+            sock::Read(sockfd, (char *) &randNum, sizeof(randNum));
+            
+            int len;
+
+            sock::Read(sockfd, (char *) &len, sizeof(len));
+
+            sock::Read(sockfd, (char *) recvline, len * sizeof(char));
+
+            recvline[len] = '\0';
+
+            address = std::string(recvline);
         }
     }
 
@@ -428,6 +465,29 @@ namespace sock {
                     sock::Write(sockfd, (char *) cli.second.c_str(), len * sizeof(char));
                 }
             }
+        }
+    }
+
+    void readListOfClients(int sockfd, char *recvline, std::map<int, std::string> &clients) {
+        int num_clis;
+        sock::Read(sockfd, (char *) &num_clis, sizeof(num_clis));
+
+        clients.clear();
+
+        for (int i = 0; i < num_clis; ++i) {
+            int cli_id;
+
+            sock::Read(sockfd, (char *) &cli_id, sizeof(int));
+
+            int len;
+
+            sock::Read(sockfd, (char *) &len, sizeof(len));
+
+            sock::Read(sockfd, (char *) recvline, len * sizeof(char));
+
+            recvline[len] = '\0';
+
+            clients[cli_id] = std::string(recvline);
         }
     }
 }

@@ -9,6 +9,7 @@
 #include <set>
 #include <map>
 #include <stdio.h>
+#include <cstdlib>
 
 int main (int argc, char **argv) {
     /* 
@@ -155,11 +156,14 @@ int main (int argc, char **argv) {
                                     playing.insert(idCli);
                                     playing.insert(idPeer);
 
+                                    int rand1 = rand() % 2;
+                                    int rand2 = (rand1 == 0) ? 1 : 0;
+
                                     // send message (with address of peer) to client to start game
-                                    sock::writeAcceptMsg(sockfdcli, itPeer->second);
+                                    sock::writeAcceptMsg(sockfdcli, itPeer->second, rand1);
 
                                     // send message (with address of client) to peer to start game
-                                    sock::writeAcceptMsg(client[idPeer], itCli->second);
+                                    sock::writeAcceptMsg(client[idPeer], itCli->second, rand2);
                                 }
                             }
                             

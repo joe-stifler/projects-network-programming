@@ -12,6 +12,17 @@ enum PlayerId : char {
     Player2 = 'O'
 };
 
+void getIpPort(std::string &address, std::string &ip, int &port) {
+    std::string s(address);
+    std::string token = s.substr(0, s.find(":"));
+
+    ip = token.c_str();
+
+    token = s.substr(s.find(":") + 1, s.size());
+
+    port = std::atoi(token.c_str());
+}
+
 void treat_line(char sendline[], std::string delimiter, int &line, int &column) {
     std::string s(sendline);
     std::string token = s.substr(0, s.find(delimiter));
@@ -82,7 +93,9 @@ char test_board(char *board) {
     return PlayerId::NoPlayer;
 }
 
-char play_game(int sockfd, sock::SocketAddr &ppeeraddr, PlayerId player) {
+char play_game(int sockfd, sock::SocketAddr ppeeraddr, PlayerId player) {
+    printf("\033[2J\033[1;1H");
+
     char winner;
     int line, column;
     char board[9], sendline[MAXLINE];
@@ -164,30 +177,6 @@ void verify_input(int argc, char **argv) {
     }
 }
 
-void readListOfClients(int sockfd, std::map<int, std::string> &clients) {
-    int num_clis;
-    char buf[MAX_LINE];
-    sock::Read(sockfd, (char *) &num_clis, sizeof(num_clis));
-
-    clients.clear();
-
-    for (int i = 0; i < num_clis; ++i) {
-        int cli_id;
-
-        sock::Read(sockfd, (char *) &cli_id, sizeof(int));
-
-        int len;
-
-        sock::Read(sockfd, (char *) &len, sizeof(len));
-
-        sock::Read(sockfd, (char *) buf, len * sizeof(char));
-
-        buf[len] = '\0';
-
-        clients[cli_id] = std::string(buf);
-    }
-}
-
 void printListOfClients(std::map<int, std::string> &clients) {
     printf("\033[2J\033[1;1H");
     printf("**********************************\n");
@@ -209,7 +198,7 @@ void printListOfClients(std::map<int, std::string> &clients) {
 
 int main(int argc, char **argv) {
     char *buf = new char[MAX_LINE];
-    // char *recvline = new char[MAX_LINE];
+    char *recvline = new char[MAX_LINE];
 
     verify_input(argc, argv);
 
@@ -237,12 +226,12 @@ int main(int argc, char **argv) {
         tipo internet (AF_INET), assim como a porta e o endereço
         de conexão do servidor
     */
-    // sock::SocketAddr cliaddr(AF_INET, local_ip, local_port);
+    sock::SocketAddr cliaddr(AF_INET, local_ip, local_port);
 
     /* cria um novo socket para realizar as requisições */
-    // int peerfd = sock::Socket(AF_INET, SOCK_DGRAM, 0);
+    int peerfd = sock::Socket(AF_INET, SOCK_DGRAM, 0);
 
-    // sock::Bind(peerfd, &cliaddr);
+    sock::Bind(peerfd, &cliaddr);
 
     std::map<int, std::string> clients;
 
@@ -256,7 +245,8 @@ int main(int argc, char **argv) {
 
     sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
 
-    int n, idCli;
+    int n, idCli, randNum, peerport;
+    std::string address, peerip;
 
     while (true) {
         FD_SET(fileno(stdin), &rset); /* seta o bit de rset referente a posição 'fileno(fp)' */
@@ -279,11 +269,36 @@ int main(int argc, char **argv) {
                     case sock::NewGameMsg:
                         sock::readNewGameMsg(serverfd, idCli);
 
-                        printf("New game request from: %d\n", idCli);
+                        printf("Convite de jogo pelo cliente: %d\n", idCli);
+
+                        printf("Voce aceita o convite? ('S' ou 'N'): ");
+
+                        char aceite;
+
+                        if (scanf("%c", &aceite) && aceite == 'S') {
+                            sock::writeAcceptMsg2(serverfd, idCli);
+                        } else {
+                            sock::writeDenyMsg2(serverfd, idCli);
+                            printListOfClients(clients);
+                        }
 
                         break;
 
                     case sock::AcceptMsg:
+                        sock::readAcceptMsg(serverfd, recvline, address, randNum);
+
+                        getIpPort(address, peerip, peerport);
+
+                        printf("Starting game with: %s -- %d (rand num = %d)\n", peerip.c_str(), peerport, randNum);
+
+                        if (randNum == 0) {
+                            char winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player1);
+                            printf("The winner is: %c\n", winner);
+                        } else {
+                            char winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player2);
+                            printf("The winner is: %c\n", winner);
+                        }
+
                         break;
 
                     case sock::DenyMsg:
@@ -291,12 +306,16 @@ int main(int argc, char **argv) {
                         printf("************************************************************\n");
                         printf("*          Voce foi rejeitado pelo outro jogador.          *\n");
                         printf("* Tecle enter para voltar a lista de clientes disponiveis. *\n");
-                        printf("************************************************************\n");
+                        printf("************************************************************\n\n\n");
+
+                        if (fgets (recvline, MAX_LINE, stdin) >= 0) {
+                            printListOfClients(clients);
+                        }
 
                         break;
 
                     case sock::UpdateList:
-                        readListOfClients(serverfd, clients);
+                        sock::readListOfClients(serverfd, recvline, clients);
 
                         printListOfClients(clients);
 
@@ -322,7 +341,7 @@ int main(int argc, char **argv) {
                     // send to server --> NewGame
                     int peerId = atoi(buf);
                     bool clientFound = false;
-                    
+
                     for (auto &cli : clients) {
                         if (cli.first == peerId) {
                             clientFound = true;
@@ -351,12 +370,6 @@ int main(int argc, char **argv) {
     }
 
     sock::Close(serverfd);
-
-    // if (atoi(argv[3]) == 0) {
-    //     char winner = play_game(peerfd, ppeeraddr, PlayerId::Player1);
-    // } else {
-    //     char winner = play_game(peerfd, ppeeraddr, PlayerId::Player2);
-    // }
 
     return 0;
 }
