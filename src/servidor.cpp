@@ -10,60 +10,6 @@
 #include <map>
 #include <stdio.h>
 
-void writeDenyMsg(int sockfd) {
-    if (sockfd >= 0) {
-        auto status = sock::DenyMsg;
-
-        // send message (with address of peer) to client to start game
-        sock::Write(sockfd, (char *) &status, sizeof(status));
-    }
-}
-
-void writeNewGameMsg(int sockfd, int idCli) {
-    if (sockfd >= 0) {
-        auto status = sock::NewGameMsg;
-        
-        // send message to peer (to start a new game)
-        sock::Write(sockfd, (char *) &status, sizeof(status));
-
-        // send to peer the id of client i
-        sock::Write(sockfd, (char *) &idCli, sizeof(idCli));
-    }
-}
-
-void writeAcceptMsg(int sockfd, std::string address) {
-    if (sockfd >= 0) {
-        auto status = sock::AcceptMsg;
-
-        // send message (with address of peer) to client to start game
-        sock::Write(sockfd, (char *) &status, sizeof(status));
-
-        auto len = (int) address.size();
-
-        sock::Write(sockfd, (char *) &len, sizeof(len));
-
-        sock::Write(sockfd, (char *) address.c_str(), len * sizeof(char));
-    }
-}
-
-void writeListOfClient(int sockfd, std::map<int, std::string> &clients) {
-    if (sockfd >= 0) {
-        int num_clis = (int) clients.size();
-
-        sock::Write(sockfd, (char *) &num_clis, sizeof(num_clis));
-
-        for (auto &cli : clients) {
-            sock::Write(sockfd, (char *) &cli.first, sizeof(int));
-
-            int len = (int) cli.second.size();
-
-            sock::Write(sockfd, (char *) &len, sizeof(len));
-
-            sock::Write(sockfd, (char *) cli.second.c_str(), len * sizeof(char));
-        }
-    }
-}
-
 int main (int argc, char **argv) {
     /* 
        Verificamos se o usuário passou o número correto de parâmetros
@@ -187,15 +133,15 @@ int main (int argc, char **argv) {
                             sock::Read(sockfdcli, (char *) &idPeer, sizeof(idPeer));
 
                             // verify if peer exists and is available (is not playing already)
-                            if (client[idPeer] > 0 && playing.find(idPeer) == playing.end()) {
-                                writeNewGameMsg(client[idPeer], idCli);
+                            if (client[idPeer] > 0 && playing.find(idPeer) == playing.end() && playing.find(idCli) == playing.end()) {
+                                sock::writeNewGameMsg(client[idPeer], idCli);
                             } else { // the peer is already playing or does not exist
                                 // send message to client denying game
-                                writeDenyMsg(sockfdcli);
+                                sock::writeDenyMsg(sockfdcli);
                             }
 
                             break;
-                        case sock::AcceptMsg:                            
+                        case sock::AcceptMsg:
                             sock::Read(sockfdcli, (char *) &idPeer, sizeof(idPeer));
 
                             // verify if both exists
@@ -210,10 +156,10 @@ int main (int argc, char **argv) {
                                     playing.insert(idPeer);
 
                                     // send message (with address of peer) to client to start game
-                                    writeAcceptMsg(sockfdcli, itPeer->second);
+                                    sock::writeAcceptMsg(sockfdcli, itPeer->second);
 
                                     // send message (with address of client) to peer to start game
-                                    writeAcceptMsg(client[idPeer], itCli->second);
+                                    sock::writeAcceptMsg(client[idPeer], itCli->second);
                                 }
                             }
                             
@@ -222,12 +168,12 @@ int main (int argc, char **argv) {
                             sock::Read(sockfdcli, (char *) &idPeer, sizeof(idPeer));
 
                             // send message to peer to deny game
-                            writeDenyMsg(client[idPeer]);
+                            sock::writeDenyMsg(client[idPeer]);
 
                             break;
                         
                         case sock::UpdateList:
-                            writeListOfClient(sockfdcli, clients);
+                            sock::writeListOfClients(sockfdcli, idCli, clients);
 
                             break;
 

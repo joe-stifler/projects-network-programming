@@ -14,7 +14,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MAX_LINE 4096
+#include <map>
+#include <string>
+
+#define MAX_LINE 1000
 
 namespace sock {
     enum MessageStatus : char {
@@ -270,9 +273,8 @@ namespace sock {
         return NULL;
     }
 
-    void printIpPort(int sockfd) {
+    void printIpPort(int sockfd, char *local_ip, int &local_port) {
         /* 16 bytes para IPv4 */
-        char local_ip[16];
         struct sockaddr_in local_addr;
 
         /* setamos a estrutura inteira local_addr para 0 */
@@ -300,7 +302,7 @@ namespace sock {
             usado no host (little-endian). ntohs--> n de network, 
             to = para, h de host, s de unsigned short integer
         */
-        unsigned int local_port = (unsigned int) ntohs(local_addr.sin_port);
+        local_port = (int) ntohs(local_addr.sin_port);
 
         printf("IP do usuário local = %s\nPorta do usuário local = %d\n", local_ip, (int) local_port);
     }
@@ -357,6 +359,77 @@ namespace sock {
         }
     }
 
+    void writeDenyMsg(int sockfd) {
+        if (sockfd >= 0) {
+            auto status = sock::DenyMsg;
+
+            // send message (with address of peer) to client to start game
+            sock::Write(sockfd, (char *) &status, sizeof(status));
+        }
+    }
+
+    void writeNewGameMsg(int sockfd, int idCli) {
+        if (sockfd >= 0) {
+            auto status = sock::NewGameMsg;
+            
+            // send message to peer (to start a new game)
+            sock::Write(sockfd, (char *) &status, sizeof(status));
+
+            // send to peer the id of client i
+            sock::Write(sockfd, (char *) &idCli, sizeof(idCli));
+        }
+    }
+
+    void readNewGameMsg(int sockfd, int &idCli) {
+        if (sockfd >= 0) {
+            auto status = sock::NewGameMsg;
+            
+            // send message to peer (to start a new game)
+            sock::Read(sockfd, (char *) &status, sizeof(status));
+
+            // send to peer the id of client i
+            sock::Read(sockfd, (char *) &idCli, sizeof(idCli));
+        }
+    }
+
+    void writeAcceptMsg(int sockfd, std::string address) {
+        if (sockfd >= 0) {
+            auto status = sock::AcceptMsg;
+
+            // send message (with address of peer) to client to start game
+            sock::Write(sockfd, (char *) &status, sizeof(status));
+
+            auto len = (int) address.size();
+
+            sock::Write(sockfd, (char *) &len, sizeof(len));
+
+            sock::Write(sockfd, (char *) address.c_str(), len * sizeof(char));
+        }
+    }
+
+    void writeListOfClients(int sockfd, int idCli, std::map<int, std::string> &clients) {
+        if (sockfd >= 0) {
+            auto status = sock::UpdateList;
+
+            sock::Write(sockfd, (char *) &status, sizeof(status));
+
+            int num_clis = (int) clients.size() - 1;
+
+            sock::Write(sockfd, (char *) &num_clis, sizeof(num_clis));
+
+            for (auto &cli : clients) {
+                if (cli.first != idCli) {
+                    sock::Write(sockfd, (char *) &cli.first, sizeof(int));
+
+                    int len = (int) cli.second.size();
+
+                    sock::Write(sockfd, (char *) &len, sizeof(len));
+
+                    sock::Write(sockfd, (char *) cli.second.c_str(), len * sizeof(char));
+                }
+            }
+        }
+    }
 }
 
 #endif

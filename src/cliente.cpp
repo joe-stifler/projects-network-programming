@@ -164,10 +164,54 @@ void verify_input(int argc, char **argv) {
     }
 }
 
-int main(int argc, char **argv) {
-    verify_input(argc, argv);
+void readListOfClients(int sockfd, std::map<int, std::string> &clients) {
+    int num_clis;
+    char buf[MAX_LINE];
+    sock::Read(sockfd, (char *) &num_clis, sizeof(num_clis));
 
-    sock::SocketAddr cliaddr(AF_INET, (int) INADDR_ANY, 0);
+    clients.clear();
+
+    for (int i = 0; i < num_clis; ++i) {
+        int cli_id;
+
+        sock::Read(sockfd, (char *) &cli_id, sizeof(int));
+
+        int len;
+
+        sock::Read(sockfd, (char *) &len, sizeof(len));
+
+        sock::Read(sockfd, (char *) buf, len * sizeof(char));
+
+        buf[len] = '\0';
+
+        clients[cli_id] = std::string(buf);
+    }
+}
+
+void printListOfClients(std::map<int, std::string> &clients) {
+    printf("\033[2J\033[1;1H");
+    printf("**********************************\n");
+    printf("*       Lista de clientes:       *\n");
+    printf("**********************************\n");
+
+    if (clients.size() > 0) {
+        for (auto &cli : clients) {
+            printf("* Client %d: %s *\n", cli.first, cli.second.c_str());
+        }
+    } else {
+        printf("*              Vazia             *\n");
+    }
+
+    printf("**********************************\n");
+    printf("* Escolha o cliente: ");
+    fflush(stdout);
+}
+
+int main(int argc, char **argv) {
+    char *buf = new char[MAX_LINE];
+    // char *recvline = new char[MAX_LINE];
+
+    verify_input(argc, argv);
 
     /*
         constrói o socket de endereço, definindo conexão do 
@@ -182,47 +226,131 @@ int main(int argc, char **argv) {
     /* conecta o socket criado ao servidor */
     sock::Connect(serverfd, &servaddr);
 
-    sock::printIpPort(serverfd);
+    int counter = 0;
+    int local_port = 0; 
+    char local_ip[16] = {0};
 
-    int num_clis;
-    char buf[MAX_LINE];
-    std::map<int, std::string> clients;
+    sock::printIpPort(serverfd, local_ip, local_port);
 
-    sock::Read(serverfd, (char *) &num_clis, sizeof(num_clis));
+    /*
+        constrói o socket de endereço, definindo conexão do 
+        tipo internet (AF_INET), assim como a porta e o endereço
+        de conexão do servidor
+    */
+    // sock::SocketAddr cliaddr(AF_INET, local_ip, local_port);
 
-    for (int i = 0; i < num_clis; ++i) {
-        int cli_id;
-
-        sock::Read(serverfd, (char *) &cli_id, sizeof(int));
-
-        int len;
-
-        sock::Read(serverfd, (char *) &len, sizeof(len));
-
-        sock::Read(serverfd, (char *) buf, len * sizeof(char));
-
-        buf[len] = '\0';
-
-        clients[cli_id] = std::string(buf);
-
-        printf("Client %d: %s\n", cli_id, buf);
-    }
-
-    while (true);
-
-    sock::Close(serverfd);
-
-    // /* 
-    //     constrói o socket de endereço, definindo conexão do 
-    //     tipo internet (AF_INET), assim como a porta e o endereço
-    //     de conexão do servidor
-    // */
-    // sock::SocketAddr ppeeraddr(AF_INET, (char *) argv[1], atoi(argv[2]));
-
-    // /* cria um novo socket para realizar as requisições */
+    /* cria um novo socket para realizar as requisições */
     // int peerfd = sock::Socket(AF_INET, SOCK_DGRAM, 0);
 
     // sock::Bind(peerfd, &cliaddr);
+
+    std::map<int, std::string> clients;
+
+    fd_set rset;
+
+    FD_ZERO(&rset); /* limpas os bits de rset */
+    
+    std::cout << "\033[2J\033[1;1H";
+
+    sock::MessageStatus msgStatus = sock::UpdateList;
+
+    sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
+
+    int n, idCli;
+
+    while (true) {
+        FD_SET(fileno(stdin), &rset); /* seta o bit de rset referente a posição 'fileno(fp)' */
+
+        FD_SET(serverfd, &rset); /* seta o bit de rset referente a posição 'sockfd' */
+
+        int maxfdp1 = std::max(fileno(stdin), serverfd) + 1;
+
+        /* executa a função select enquanto ou o socket 'sockfd' ou o stdin não estiverem prontos para leitura */
+        int nready = sock::Select(maxfdp1, &rset);
+
+        if (nready > 0) {
+            /* Verifica se o socket 'sockfd' está pronto para ser lido */
+            if (FD_ISSET(serverfd, &rset)) {
+                if ((n = sock::Read(serverfd, (char *) &msgStatus, sizeof(sock::MessageStatus))) == 0) {
+                    break;
+                }
+
+                switch (msgStatus) {
+                    case sock::NewGameMsg:
+                        sock::readNewGameMsg(serverfd, idCli);
+
+                        printf("New game request from: %d\n", idCli);
+
+                        break;
+
+                    case sock::AcceptMsg:
+                        break;
+
+                    case sock::DenyMsg:
+                        printf("\033[2J\033[1;1H");
+                        printf("************************************************************\n");
+                        printf("*          Voce foi rejeitado pelo outro jogador.          *\n");
+                        printf("* Tecle enter para voltar a lista de clientes disponiveis. *\n");
+                        printf("************************************************************\n");
+
+                        break;
+
+                    case sock::UpdateList:
+                        readListOfClients(serverfd, clients);
+
+                        printListOfClients(clients);
+
+                        break;
+
+                    case sock::FinishGame:
+                        break;
+                }
+            }
+
+            /* Verifica se o file descriptor da entrada padrão do programa (stdin) está 
+                preparado para ter seu conteúdo lido */
+            if (FD_ISSET(fileno(stdin), &rset)) {
+                /* lê o conteúdo da entrada padrão (stdin) e verifica se todo o arquivo de entrada foi lido */
+                int n = sock::Read(fileno(stdin), buf + counter, 1);
+
+                counter += n; /* atualiza o número de caracters contido na linha */
+
+                /* verifica se uma linha já foi lida por completo, para poder ser enviada para o servidor */
+                if (buf[counter - 1] == '\n' || buf[counter - 1] == '\t') {
+                    buf[counter] = '\0';
+
+                    // send to server --> NewGame
+                    int peerId = atoi(buf);
+                    bool clientFound = false;
+                    
+                    for (auto &cli : clients) {
+                        if (cli.first == peerId) {
+                            clientFound = true;
+                            break;
+                        }
+                    }
+    
+                    if (clientFound) {
+                        printf("**********************************\n");
+                        printf("* Voce escolheu o cliente: %d\n", peerId);
+                        printf("* Agora espere a resposta do outro cliente\n");
+
+                        sock::writeNewGameMsg(serverfd, peerId);
+                    } else {
+                        printf("**********************************\n");
+                        printf("* Voce escolheu um cliente invalido\n");
+                        printf("**********************************\n");
+                        printf("* Escolha o cliente: ");
+                        fflush(stdout);
+                    }
+
+                    counter = 0; /* zera o contador de caracters da linha */
+                }
+            }
+        }
+    }
+
+    sock::Close(serverfd);
 
     // if (atoi(argv[3]) == 0) {
     //     char winner = play_game(peerfd, ppeeraddr, PlayerId::Player1);
