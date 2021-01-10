@@ -48,7 +48,9 @@ int main (int argc, char **argv) {
     int maxfd = listenfd;
     int nready, client[FD_SETSIZE];
 
+    int score;
     std::set<int> playing;
+    std::map<int, int> scores;
     std::map<int, std::string> clients;
 
     for (int i = 0; i < FD_SETSIZE; ++i) client[i] = -1; /* inicializa todos os índices do vetor de clientes como estando inativos */
@@ -70,7 +72,7 @@ int main (int argc, char **argv) {
             int connfd = Accept(listenfd, &clientaddr);      
 
             /* informa que o file descriptor na posição i agora está ativo (e relacionado com o cliente i) */
-            for (i = 0; i < FD_SETSIZE; ++i) {
+            for (i = 1; i < FD_SETSIZE; ++i) {
                 if (client[i] < 0) {
                     client[i] = connfd; /* salva descritor */
                     break;
@@ -98,6 +100,7 @@ int main (int argc, char **argv) {
 
             printf("Client: %s\n", user_data);
 
+            scores[i] = 0;
             clients[i] = std::string(user_data);
 
             if (--nready <= 0) continue;    /* não há mais descritores prontos para leitura. continua para a próxima iteração do loop. */
@@ -105,7 +108,7 @@ int main (int argc, char **argv) {
 
         /* itera sobre todos os descritores abertos (igual ao numero total de clientes ativos)
             e busca o descritor do cliente que possui algum conteúdo a ser lido */
-        for (int idCli = 0; idCli <= maxi; ++idCli) {
+        for (int idCli = 1; idCli <= maxi; ++idCli) {
             int n, sockfdcli;
 
             /* verifica se o descritor i está ativo */
@@ -122,6 +125,7 @@ int main (int argc, char **argv) {
                     
                     FD_CLR(sockfdcli, &allset); /* limpa os bits de allset */
 
+                    scores.erase(idCli);
                     clients.erase(idCli);
                     playing.erase(idCli);
 
@@ -177,12 +181,16 @@ int main (int argc, char **argv) {
                             break;
                         
                         case sock::UpdateList:
-                            sock::writeListOfClients(sockfdcli, idCli, clients);
+                            sock::writeListOfClients(sockfdcli, idCli, clients, playing, scores);
 
                             break;
 
                         case sock::FinishGame:
                             playing.erase(idCli);
+
+                            sock::Read(sockfdcli, (char *) &score, sizeof(score));                            
+
+                            scores[idCli] += score;
 
                             break;
                     }

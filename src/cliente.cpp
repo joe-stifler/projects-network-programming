@@ -41,16 +41,16 @@ void read_input(char board[], char sendline[], PlayerId player) {
     while (!valid) {
         fflush(stdin); 
 
-        printf("Your time (the symbol %c). Give the coordinates (line, column) in range [1, 3]: ", player);
+        printf("Sua vez (seu símbolo é %c). Dê as coordenadas (linha, coluna) no intervalo [1, 3]: ", player);
 
         while (fgets(sendline, MAXLINE, stdin) == NULL);
 
         treat_line(sendline, " ", line, column);
 
         if (column + line * 3 >= 9 || column + line * 3 < 0)
-            printf("[Invalid cells] line = %d, column = %d. Choose a line and column between 1 and 3\n", line + 1, column + 1);
+            printf("[Células inválidas] linha = %d, coluna = %d. Escolha uma linha e uma coluna entre 1 e 3\n", line + 1, column + 1);
         else {
-            if (board[column + line * 3] != ' ') printf("[Invalid cells] line = %d, column = %d. Choose an empty cell.\n", line + 1, column + 1);
+            if (board[column + line * 3] != ' ') printf("[Células inválidas] linha = %d, coluna = %d. Escolha uma célula vazia.\n", line + 1, column + 1);
             else {
                 valid = true;
                 board[column + line * 3] = player;
@@ -104,6 +104,8 @@ char play_game(int sockfd, sock::SocketAddr ppeeraddr, PlayerId player) {
 
     update_screen(board);
 
+    fflush(stdin);
+
     if (player == PlayerId::Player1) {
         for (int i = 0; i < 4; ++i) {
             read_input(board, sendline, player);
@@ -145,18 +147,6 @@ char play_game(int sockfd, sock::SocketAddr ppeeraddr, PlayerId player) {
             if ((winner = test_board(board)) && winner != ' ') break;
         }
     }
-
-    switch (winner) {
-        case PlayerId::Player1:
-        case PlayerId::Player2:
-            if (winner == player) printf("You (%c) won the match.\n", player);
-            else printf("You (%c) lost the match\n", player);
-            
-            break;
-        
-        default:
-            printf("No winner. It is a draw.");
-    }
     
     return winner;
 }
@@ -177,22 +167,49 @@ void verify_input(int argc, char **argv) {
     }
 }
 
-void printListOfClients(std::map<int, std::string> &clients) {
+void printListOfClients(std::map<int, std::string> &clients, std::set<int> &playing, std::map<int, int> &scores, int myId) {
     printf("\033[2J\033[1;1H");
+    printf("**********************************\n");
+    printf("*       Minhas credenciais:      *\n");
+    printf("**********************************\n");
+    auto cli = clients.find(myId);
+    bool available = true;
+    int score = scores[cli->first];
+
+    if (playing.find(cli->first) != playing.end()) available = false;
+
+    printf("* Meu usuario:                   *\n*    - id: %s  *\n*    - score: %d                  *\n*    - status: ", cli->second.c_str(), score);
+
+    if (available) printf("disponível\n");
+    else printf("ocupado\n");
+
+    printf("**********************************\n");
+    printf("\n\n");
+
     printf("**********************************\n");
     printf("*       Lista de clientes:       *\n");
     printf("**********************************\n");
 
     if (clients.size() > 0) {
         for (auto &cli : clients) {
-            printf("* Client %d: %s *\n", cli.first, cli.second.c_str());
+            if (myId != cli.first) {
+                bool available = true;
+                int score = scores[cli.first];
+
+                if (playing.find(cli.first) != playing.end()) available = false;
+
+                printf("* Cliente %d:                     *\n*    - id: %s  *\n*    - score: %d                  *\n*    - status: ", cli.first, cli.second.c_str(), score);
+
+                if (available) printf("disponível\n");
+                else printf("ocupado\n");
+                printf("**********************************\n");
+            }
         }
     } else {
         printf("*              Vazia             *\n");
     }
 
-    printf("**********************************\n");
-    printf("* Escolha o cliente: ");
+    printf("\nEscolha o cliente ('enter' para atualizar lista): ");
     fflush(stdout);
 }
 
@@ -233,6 +250,9 @@ int main(int argc, char **argv) {
 
     sock::Bind(peerfd, &cliaddr);
 
+    int myId = -1;
+    std::set<int> playing;
+    std::map<int, int> scores;
     std::map<int, std::string> clients;
 
     fd_set rset;
@@ -245,6 +265,8 @@ int main(int argc, char **argv) {
 
     sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
 
+    int score = 0;
+    char winner = PlayerId::NoPlayer;
     int n, idCli, randNum, peerport;
     std::string address, peerip;
 
@@ -269,17 +291,21 @@ int main(int argc, char **argv) {
                     case sock::NewGameMsg:
                         sock::readNewGameMsg(serverfd, idCli);
 
-                        printf("Convite de jogo pelo cliente: %d\n", idCli);
+                        printf("\033[2J\033[1;1H");
+                        printf("************************************************************\n");
+                        printf("* Convite de jogo pelo cliente: %d\n", idCli);
 
-                        printf("Voce aceita o convite? ('S' ou 'N'): ");
+                        printf("* Voce aceita o convite? ('S' ou 'N'): ");
 
                         char aceite;
+
+                        fflush(stdin);
 
                         if (scanf("%c", &aceite) && aceite == 'S') {
                             sock::writeAcceptMsg2(serverfd, idCli);
                         } else {
                             sock::writeDenyMsg2(serverfd, idCli);
-                            printListOfClients(clients);
+                            printListOfClients(clients, playing, scores, myId);
                         }
 
                         break;
@@ -291,13 +317,57 @@ int main(int argc, char **argv) {
 
                         printf("Starting game with: %s -- %d (rand num = %d)\n", peerip.c_str(), peerport, randNum);
 
+                        score = 0;
+
+                        winner = PlayerId::NoPlayer;
+
                         if (randNum == 0) {
-                            char winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player1);
-                            printf("The winner is: %c\n", winner);
+                            winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player1);
+
+                            printf("\033[2J\033[1;1H");
+                            printf("************************************************************\n");
+
+                            if (winner == PlayerId::Player1) {
+                                score += 1;
+                                printf("*              Parabéns!!! Você venceu o jogo!             *\n");
+                            } else if (winner == PlayerId::Player2) {
+                                printf("*              Desculpa!!! Você perdeu o jogo!             *\n");
+                            } else {
+                                printf("*                Mehhhhhh!!! O jogo empatou!               *\n");
+                            }
                         } else {
-                            char winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player2);
-                            printf("The winner is: %c\n", winner);
+                            winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player2);
+
+
+                            printf("\033[2J\033[1;1H");
+                            printf("************************************************************\n");
+
+                            if (winner == PlayerId::Player2) {
+                                score += 1;
+                                printf("*              Parabéns!!! Você venceu o jogo!             *\n");
+                            } else if (winner == PlayerId::Player1) {
+                                printf("*              Desculpa!!! Você perdeu o jogo!             *\n");
+                            } else {
+                                printf("*                Mehhhhhh!!! O jogo empatou!               *\n");
+                            }
                         }
+
+                        printf("* Tecle enter para voltar a lista de clientes disponiveis. *\n");
+                        printf("************************************************************\n\n\n");
+
+                        msgStatus = sock::FinishGame;
+
+                        sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
+
+                        sock::Write(serverfd, (char *) &score, sizeof(score));
+
+                        if (fgets (recvline, MAX_LINE, stdin) >= 0) {
+                            printListOfClients(clients, playing, scores, myId);
+                        }
+
+                        msgStatus = sock::UpdateList;
+
+                        sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
 
                         break;
 
@@ -309,15 +379,15 @@ int main(int argc, char **argv) {
                         printf("************************************************************\n\n\n");
 
                         if (fgets (recvline, MAX_LINE, stdin) >= 0) {
-                            printListOfClients(clients);
+                            printListOfClients(clients, playing, scores, myId);
                         }
 
                         break;
 
                     case sock::UpdateList:
-                        sock::readListOfClients(serverfd, recvline, clients);
+                        sock::readListOfClients(serverfd, recvline, clients, playing, scores, myId);
 
-                        printListOfClients(clients);
+                        printListOfClients(clients, playing, scores, myId);
 
                         break;
 
@@ -343,24 +413,38 @@ int main(int argc, char **argv) {
                     bool clientFound = false;
 
                     for (auto &cli : clients) {
-                        if (cli.first == peerId) {
+                        if (cli.first == peerId && cli.first != myId) {
                             clientFound = true;
                             break;
                         }
                     }
     
                     if (clientFound) {
-                        printf("**********************************\n");
-                        printf("* Voce escolheu o cliente: %d\n", peerId);
-                        printf("* Agora espere a resposta do outro cliente\n");
+                        printf("\033[2J\033[1;1H");
+                        printf("************************************************************\n");
+                        printf("*                Voce escolheu o cliente: %d                *\n", peerId);
+                        printf("*          Agora espere a resposta do outro cliente        *\n");
+                        printf("************************************************************\n");
 
                         sock::writeNewGameMsg(serverfd, peerId);
+                    } else if (peerId != 0) {
+                        printf("\033[2J\033[1;1H");
+                        printf("************************************************************\n");
+                        printf("*            Voce escolheu um cliente invalido.            *\n");
+                        printf("* Tecle enter para voltar a lista de clientes disponiveis. *\n");
+                        printf("************************************************************\n\n\n");
+
+                        if (fgets (recvline, MAX_LINE, stdin) >= 0) {
+                            printListOfClients(clients, playing, scores, myId);
+                        }
+                        
+                        sock::MessageStatus msgStatus = sock::UpdateList;
+
+                        sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
                     } else {
-                        printf("**********************************\n");
-                        printf("* Voce escolheu um cliente invalido\n");
-                        printf("**********************************\n");
-                        printf("* Escolha o cliente: ");
-                        fflush(stdout);
+                        sock::MessageStatus msgStatus = sock::UpdateList;
+
+                        sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
                     }
 
                     counter = 0; /* zera o contador de caracters da linha */

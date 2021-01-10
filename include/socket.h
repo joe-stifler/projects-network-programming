@@ -14,6 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <set>
 #include <map>
 #include <string>
 
@@ -444,40 +445,67 @@ namespace sock {
         }
     }
 
-    void writeListOfClients(int sockfd, int idCli, std::map<int, std::string> &clients) {
+    void writeListOfClients(int sockfd, int idCli, std::map<int, std::string> &clients, std::set<int> &playing, std::map<int, int> &scores) {
         if (sockfd >= 0) {
             auto status = sock::UpdateList;
 
             sock::Write(sockfd, (char *) &status, sizeof(status));
 
-            int num_clis = (int) clients.size() - 1;
+            int num_clis = (int) clients.size();
+
+            sock::Write(sockfd, (char *) &idCli, sizeof(idCli));
 
             sock::Write(sockfd, (char *) &num_clis, sizeof(num_clis));
 
             for (auto &cli : clients) {
-                if (cli.first != idCli) {
-                    sock::Write(sockfd, (char *) &cli.first, sizeof(int));
+                sock::Write(sockfd, (char *) &cli.first, sizeof(int));
 
-                    int len = (int) cli.second.size();
+                int score = scores[cli.first];
 
-                    sock::Write(sockfd, (char *) &len, sizeof(len));
+                sock::Write(sockfd, (char *) &score, sizeof(int));
 
-                    sock::Write(sockfd, (char *) cli.second.c_str(), len * sizeof(char));
-                }
+                bool available = true;
+
+                if (playing.find(cli.first) != playing.end()) available = false;
+
+                sock::Write(sockfd, (char *) &available, sizeof(available));
+
+                int len = (int) cli.second.size();
+
+                sock::Write(sockfd, (char *) &len, sizeof(len));
+
+                sock::Write(sockfd, (char *) cli.second.c_str(), len * sizeof(char));
             }
         }
     }
 
-    void readListOfClients(int sockfd, char *recvline, std::map<int, std::string> &clients) {
+    void readListOfClients(int sockfd, char *recvline, std::map<int, std::string> &clients, std::set<int> &playing, std::map<int, int> &scores, int &myId) {
         int num_clis;
+
+        sock::Read(sockfd, (char *) &myId, sizeof(myId));
+
         sock::Read(sockfd, (char *) &num_clis, sizeof(num_clis));
 
+        scores.clear();
+        playing.clear();
         clients.clear();
 
         for (int i = 0; i < num_clis; ++i) {
             int cli_id;
 
             sock::Read(sockfd, (char *) &cli_id, sizeof(int));
+
+            int score;
+
+            sock::Read(sockfd, (char *) &score, sizeof(int));
+
+            scores[cli_id] = score;
+
+            bool available;
+
+            sock::Read(sockfd, (char *) &available, sizeof(available));
+
+            if (!available) playing.insert(cli_id);
 
             int len;
 
