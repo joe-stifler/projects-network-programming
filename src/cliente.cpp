@@ -41,7 +41,7 @@ void read_input(char board[], char sendline[], PlayerId player) {
     while (!valid) {
         fflush(stdin); 
 
-        printf("Sua vez (seu símbolo é %c). Dê as coordenadas (linha, coluna) no intervalo [1, 3]: ", player);
+        printf("Sua vez (seu símbolo é '%c'). Dê as coordenadas (linha, coluna) no intervalo [1, 3]: ", player);
 
         while (fgets(sendline, MAXLINE, stdin) == NULL);
 
@@ -266,6 +266,7 @@ int main(int argc, char **argv) {
     sock::Write(serverfd, (char *) &msgStatus, sizeof(msgStatus));
 
     int score = 0;
+    std::string aceite;
     char winner = PlayerId::NoPlayer;
     int n, idCli, randNum, peerport;
     std::string address, peerip;
@@ -297,11 +298,10 @@ int main(int argc, char **argv) {
 
                         printf("* Voce aceita o convite? ('S' ou 'N'): ");
 
-                        char aceite;
+                        aceite = "";
+                        std::getline (std::cin, aceite);
 
-                        fflush(stdin);
-
-                        if (scanf("%c", &aceite) && aceite == 'S') {
+                        if (aceite == "S") {
                             sock::writeAcceptMsg2(serverfd, idCli);
                         } else {
                             sock::writeDenyMsg2(serverfd, idCli);
