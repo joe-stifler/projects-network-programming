@@ -178,7 +178,7 @@ void printListOfClients(std::map<int, std::string> &clients, std::set<int> &play
 
     if (playing.find(cli->first) != playing.end()) available = false;
 
-    printf("* Meu usuario:                   *\n*    - id: %s  *\n*    - score: %d                  *\n*    - status: ", cli->second.c_str(), score);
+    printf("* Meu usuario: %d                 *\n*    - id: %s  *\n*    - score: %d                  *\n*    - status: ", myId, cli->second.c_str(), score);
 
     if (available) printf("disponível\n");
     else printf("ocupado\n");
@@ -322,7 +322,12 @@ int main(int argc, char **argv) {
                         winner = PlayerId::NoPlayer;
 
                         if (randNum == 0) {
-                            winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player1);
+                            sock::SocketAddr peerAddr(AF_INET, peerip.c_str(), peerport);
+
+                            /* conecta o socket criado ao cliente X */
+                            sock::Connect(peerfd, &peerAddr);
+                            
+                            winner = play_game(peerfd, peerAddr, PlayerId::Player1);
 
                             printf("\033[2J\033[1;1H");
                             printf("************************************************************\n");
@@ -336,8 +341,12 @@ int main(int argc, char **argv) {
                                 printf("*                Mehhhhhh!!! O jogo empatou!               *\n");
                             }
                         } else {
-                            winner = play_game(peerfd, sock::SocketAddr(AF_INET, peerip.c_str(), peerport), PlayerId::Player2);
+                            sock::SocketAddr peerAddr(AF_INET, peerip.c_str(), peerport);
 
+                            /* conecta o socket criado ao cliente X */
+                            sock::Connect(peerfd, &peerAddr);
+                            
+                            winner = play_game(peerfd, peerAddr, PlayerId::Player2);
 
                             printf("\033[2J\033[1;1H");
                             printf("************************************************************\n");
