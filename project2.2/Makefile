@@ -5,7 +5,7 @@ CPP_FLAGS = -O3
 
 LINKFLAGS_GPU = -O3
 
-COMPILEFLAGS = -O3 -std=c++11 -Wall
+COMPILEFLAGS = -O3 -std=c++11 -Wall -I include/
 
 ##########
 # OBJECTS

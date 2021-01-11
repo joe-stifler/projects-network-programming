@@ -1,16 +1,29 @@
-#include <socket.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <netdb.h>
+#include <string.h>
+#include <errno.h>
+#include <string.h>
+#include <stdlib.h>
+#include <unistd.h>
 
 #define MAXLINE 4096
 
+#define MY_ADDR "192.168.100.11"
+
 int main(int argc, char **argv) {
+   int    sockfd, n;
    char   recvline[MAXLINE + 1];
+   char   error[MAXLINE + 1];
+   struct sockaddr_in servaddr;
 
    /* 
       Verificamos se o usuário passou o número correto de parâmetros
    */
    if (argc != 3) {
-      char   error[MAXLINE + 1];
-
       strcpy(error,"uso: ");
       strcat(error,argv[0]);
       strcat(error," <IPaddress>");
@@ -19,49 +32,135 @@ int main(int argc, char **argv) {
       exit(1);
    }
    
-   /* 
-      constrói o socket de endereço, definindo conexão do 
-      tipo internet (AF_INET), assim como a porta de conexão
-      com o servidor
+   /*
+      Nós criamos um socket Internet (AF_INET) stream (SOCK_STREAM) 
+
+      É um nome elegante para descrever um socket TCP. A syscall
+      TCP retorna um descritor de arquivo (do linux),
+      usado para identificar o socket criado ao longo do programa.
+
+      Com o if, verificamos se o socket foi corretamente criado
    */
-   sock::SocketAddr servaddr(AF_INET, atoi(argv[2]));
-
-   /* seta o endereço ip do servidor */
-   servaddr.setInAddress((char *) argv[1]);
-
-   /* cria um novo socket para realizar as requisições */
-   int sockfd = sock::Socket(AF_INET, SOCK_STREAM, 0);
-
-   /* conecta o socket criado ao servidor */
-   sock::Connect(sockfd, &servaddr);
+   if ( (sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+      perror("socket error");
+      exit(1);
+   }
 
    /* 
-      converte informações de porta e ip do servidor que estavam no padrão da rede (big-endian),
-      para o padrão local (little-endian) 
-    */
-   char *server_data = sock::sock_ntop((struct sockaddr *) &servaddr.addr, sizeof(servaddr.addr));
+      Setamos a estrutura inteira servaddr para 0
 
-   /* printa informações de ip e porta do servidor */
-   if (server_data != NULL) printf("Dados do socket do servidor remoto = %s\n", server_data);
+      bzero é similar ao memset, contudo mais fácil 
+      de se lembrar, pois contém apenas doi parâmetros
+   */
+   bzero(&servaddr, sizeof(servaddr));
 
-   /* busca informações de porta e ip do usuário local (cliente) */
-   sock::SocketAddr clientaddr = sock::getLocalInfo(sockfd);
+   /* 
+      seta o endereço da família para o socket de internet (AF_INET)
+   */
+   servaddr.sin_family = AF_INET;
 
    /*
-      converte informações de porta e ip do cliente que estavam no padrão
-      da rede (big-endian), para o padrão local (little-endian) 
+      seta o número da porta que o servidor está escutando requisições
+
+      a função htons (host to network short) é utilizada
+      para converter o inteiro passado pelo usuário 
+      representando a porta que o servidor está escutando,
+      para o padrão de binário esperado pela rede (big-endian)
    */
-   char *user_data = sock::sock_ntop((struct sockaddr *) &clientaddr.addr, sizeof(clientaddr.addr));
+   servaddr.sin_port   = htons(atoi(argv[2]));
 
-   /* printa os dados de IP e porta do usuário local (cliente) */
-   if (user_data != NULL) printf("Dados do socket do usuário local = %s\n", user_data);
+   /* 
+      a função inet_pton (presentation to numeric) é usada para converter
+      o IP do servidor passado pelo usuário no formato de string IPV4, 
+      para o formato binário esperado pela rede.
 
-   /* fica recebendo continuamente comandos do servidor, 
-      até que a string 'exit' seja recebida */
-   sock::FetchCommands(sockfd, recvline, MAXLINE);
+      Caso o retorno de inet_pton seja menor ou igual a zero, então
+      houve erro na conversão
+   */
+   if (inet_pton(AF_INET, argv[1], &servaddr.sin_addr) <= 0) {
+      perror("inet_pton error");
+      exit(1);
+   }
 
-   /* fecha a conexão com o servidor */
-   sock::Close(sockfd);
+   /*
+      A função connect quando aplicada a um socket TCP, estabelece
+      uma conexão TCP com o servidor especificador pela estrutura servaddr
 
-   return 0;
+      caso conecte retorne um valor menor que zero, então a conexão não foi sucedida
+   */
+   if (connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
+      perror("connect error");
+      exit(1);
+   }
+   
+   /* 16 bytes para IPv4 */
+   char local_ip[16];
+   struct sockaddr_in local_addr;
+
+   /* setamos a estrutura inteira local_addr para 0 */
+   bzero(&local_addr, sizeof(local_addr));
+
+   /* tomamos a quantidade de bytes ocupados pela estrtura local_addr */
+   socklen_t size_addr = sizeof(local_addr);
+
+   /*
+      utilizamos a função getsockname para povoar a estrutura 'local_addr'
+      com base em informações locais do host (IP onde o sockfd está conectado,
+      assim como a porta onde o sockfd está fazendo a requisição para o servidor)
+   */
+   getsockname(sockfd, (struct sockaddr *) &local_addr, &size_addr);
+
+   /*
+      convertemos `local_addr.sin_addr` de um valor binário para uma
+      string no padrão IPv4
+   */
+   inet_ntop(AF_INET, &local_addr.sin_addr, local_ip, sizeof(local_ip));
+
+   /* 
+      converte a ordem do inteiro representando a porta local do cliente, 
+      do padrão usado na rede (big-endian) para o padrão 
+      usado no host (little-endian). ntohs--> n de network, 
+      to = para, h de host, s de unsigned short integer
+   */
+   unsigned int local_port = (unsigned int) ntohs(local_addr.sin_port);
+
+   printf("IP do usuário local = %s\nPorta do usuário local = %d\n", local_ip, (int) local_port);
+
+   /*
+      Devemos ser cuidados ao usar TCP pois é um protocol baseado em
+      fluxo de bytes, sem registro de fim. A resposta do servidor é normalmente
+      uma string com 26 bytes no formato "Mon May 26 20 : 58 : 40 2003\r\n".
+
+      O while abaixo é necessário uma vez que não podemos garantir que o segmento
+      TCP obtido pela syscall read() pegará todo o dado enviado pelo servidor.
+      Os 26 bytes podem ser pegos de forma completa somente após múltiplas 
+      chamadas ao read().
+
+      O loop apenas para quando o servidor fecha a conexão ou um valor menor do que
+      zero é obtido (neste caso representando um erro).
+   */
+   while ( (n = read(sockfd, recvline, MAXLINE)) > 0) {
+      recvline[n] = 0; /* definimos o fim da string */
+
+      /*
+         printamos a string contida em recvline no stdout do cliente
+      
+         também verificamos se algum erro ocorreu
+      */
+      if (fputs(recvline, stdout) == EOF) {
+         perror("fputs error");
+         exit(1);
+      }
+   }
+
+   /* verificamos se algum erro foi retornado da leitura dos dados do socket descriptor */
+   if (n < 0) {
+      perror("read error");
+      exit(1);
+   }
+
+   /* 
+      linux sempre fecha todos os descriptors abertos quando o processo termina
+   */
+   exit(0);
 }

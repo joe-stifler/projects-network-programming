@@ -1,165 +1,211 @@
-#include <socket.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <netdb.h>
+#include <sys/types.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
+#include <time.h>
+#include <unistd.h>
 
 #define LISTENQ 10
-#define MAXLINE 4096
-#define NUMCOMMANDS 4
-#define MAXCOMMAND 10
 #define MAXDATASIZE 100
 
-#include <string>
-
 int main (int argc, char **argv) {
-   char commands[NUMCOMMANDS][MAXCOMMAND] = {"date", "pwd", "ls", END_COMMAND};
+   time_t ticks;
+   int    listenfd, connfd;
+   char   buf[MAXDATASIZE];
+   struct sockaddr_in servaddr;
 
-   /* 
-      Verificamos se o usuário passou o número correto de parâmetros
+   /*
+      Nós criamos um socket Internet (AF_INET) stream (SOCK_STREAM) 
+
+      É um nome elegante para descrever um socket TCP. A syscall
+      TCP retorna um descritor de arquivo (do linux),
+      usado para identificar o socket criado ao longo do programa.
+
+      Com o if, verificamos se o socket foi corretamente criado
    */
-   if (argc != 2) {
-      char   error[100];
-
-      strcpy(error,"uso: ");
-      strcat(error,argv[0]);
-      strcat(error," <Port>");
-      perror(error);
-
+   if ((listenfd = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
+      perror("socket");
       exit(1);
    }
 
    /* 
-      constrói o socket de endereço, definindo conexão do 
-      tipo internet (AF_INET), assim como a porta de conexão
-      com na qual o servidor ficará escutando 
-      (passada pelo usuário em argv[1])
+      Setamos a estrutura inteira servaddr para 0
+
+      bzero é similar ao memset, contudo mais fácil 
+      de se lembrar, pois contém apenas doi parâmetros
    */
-   sock::SocketAddr servaddr(AF_INET, atoi(argv[1])), clientaddr(0, 0);
+   bzero(&servaddr, sizeof(servaddr));
+
+   /* 
+      seta o endereço da família para o socket de internet (AF_INET)
+   */
+   servaddr.sin_family      = AF_INET;
+
+   // servaddr.sin_addr.s_addr = htonl("192.168.0.16");
+
+   // servaddr.sin_addr.s_addr = inet_addr("192.168.100.9");
 
    /*
-      define que o servidor escutará requisições em 
-      todas as interfaces de rede
+      O endereço IP é especificado como INADDR_ANY,
+      o que permite o servidor aceitar uma conexão de 
+      um cliente a partir de qualquer interface de rede
+      (considerando que o servidor possua múltiplas interfaces, 
+      do contrário, escutará requisições sempre na mesma)
    */
-   servaddr.setInAddress((int) INADDR_ANY);
+   servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
 
-   /* cria um novo socket */
-   int listenfd = sock::Socket(AF_INET, SOCK_STREAM, 0);
+   /* 
+      Força o servidor a escolher automaticamente a porta
+      no qual ficará escutando por requisições
+   */
+   servaddr.sin_port        = htons(0);
 
-   /* atrela este socket a uma porta e interface de rede dada por 'servaddr' */
-   sock::Bind(listenfd, &servaddr);
+   /*
+      Utilizamos o bind para atrelar o socket listenfd a uma interface e porta
+      especificada por `servaddr`. Como acima utilizamos INADDR_ANY para o IP
+      e htons(0) para a porta, sabemos que a porta será escolhida automaticamente
+      conforme disponibilidade, e o socket estará atrelado a todas as interfaces
+      (todos os IPs do host).
+   */
+   if (bind(listenfd, (struct sockaddr *)&servaddr, sizeof(servaddr)) == -1) {
+      perror("bind");
+      exit(1);
+   }
 
-   /* faz com que o socket vire um socket passivo (escuta requisições) */
-   sock::Listen(listenfd, LISTENQ);
+   char server_local_ip[16];
+   struct sockaddr_in server_local_addr;
 
-   int userId = 0;
+   /* setamos a estrutura server_local_addr local_addr para 0 */
+   bzero(&server_local_addr, sizeof(server_local_addr));
+
+   /* tomamos a quantidade de bytes ocupados pela estrtura server_local_addr */
+   socklen_t size_addr = sizeof(server_local_addr);
+
+   /*
+      utilizamos a função getsockname para povoar a estrutura 'server_local_addr'
+      com base em informações locais do servidor (IP onde o listenfd está conectado,
+      assim como a porta onde o listenfd está escutando requisições)
+   */
+   getsockname(listenfd, (struct sockaddr *) &server_local_addr, &size_addr);
+
+   /*
+      convertemos `server_local_addr.sin_addr` de um valor binário para uma
+      string no padrão IPv4
+   */
+   inet_ntop(AF_INET, &server_local_addr.sin_addr, server_local_ip, sizeof(server_local_ip));
+
+   /* 
+      convertemos a ordem do inteiro representando a porta onde o servidor está escutando, 
+      do padrão usado na rede (big-endian) para o padrão 
+      usado no host (little-endian). ntohs --> n de network, 
+      to = para, h de host, s de unsigned short integer
+   */
+   unsigned int userport = ntohs(server_local_addr.sin_port);
+
+   printf("Servidor atrelado ao IP=%s e PORTA=%d\n", server_local_ip, (int) userport);
+   printf("****************************\n");
+
+   /*
+      Com a syscall listen, o socket é convertido em um socket de escuta,
+      no qual conexões de entrada vindas do cliente serão aceitas pelo kernel
+      e serão posta numa fila até serem de fato aceitas pelo servidor através da 
+      syscall accept. Usamos o LISTENQ para especificar o número máximo de conexões
+      que o kernel irá enfileirar for este descritor de escuta (listenfd)
+
+      verificamos com o if se ocorreu algum erro na execução da syscall listen()
+   */
+   if (listen(listenfd, LISTENQ) == -1) {
+      perror("listen");
+      exit(1);
+   }
 
    /* 
       Servidor entra em um loop infinito esperando por novas requisições dos clientes
    */
-   while (true) {
-      int pid;
-      
-      /* quando uma requisição for recebida, servidor a aceita */
-      int connfd = Accept(listenfd, &clientaddr);
+   for ( ; ; ) {
+      /*
+         Uma conexão TCP usa o que chamamos de three-way handshake para estabelecer a
+         conexão. Quando este handshake está completo, a syscall accept retorna
+         e o valor retornado pela syscall é um novo descritor (connfd), chamado de
+         descritor conectado. Este novo descritor é utilizado para comunicação com o cliente. 
 
-      /* 
-         faz com que o programa se divida em dois processos (pai e filho).
-         O processo que entra no if é o filho 
+         Caso o retorno do accept seja igual a -1, então houve algum erro com a tentativa
+         de aceitar a conexão com o cliente.
       */
-      if((pid = fork()) == 0) {
-         char buf[MAXDATASIZE];
-         
-         /* obtem o horário do servidor */
-         time_t ticks = time(NULL);
-
-         /*
-            escreve o horário do servidor no buffer 'buf', utilizando a formatação "%.24s\r\n"
-         */
-         snprintf(buf, sizeof(buf), "%.24s\r\n", ctime(&ticks));
-
-         sock::Close(listenfd); /* processo filho fecha o socket de escuta listenfd */
-
-         char   recvline[MAXLINE + 1];
-         char *user_data = sock::sock_ntop((struct sockaddr *) &clientaddr.addr, sizeof(clientaddr.addr));
-
-         // if (user_data != NULL) printf("Dados do socket do usuário remoto = %s\n", user_data);
-         
-         // sock::Write(connfd, buf, strlen(buf));
-
-         /* Abrimos o arquivo que contém o output da execução do cliente */
-         FILE *fp = fopen(std::string("user_file_" + std::to_string(userId) + ".txt").c_str(), "w+");
-
-         /* printa num arquivo o inicio da conexão com o cliente, assim com o horário em que a mesma ocorreu */
-         std::string message = "Início da conexão com cliente " + std::string(user_data) + ": " + std::string(buf);
-
-         /* Lemos estes bytes para o buffer recvline */
-         if (fwrite(message.c_str(), sizeof(char), message.size(), fp) != (size_t) message.size()) {
-            perror("read error");
-            exit(1);
-         }
-
-         /* Itera sobre cada um dos commandos especificados no array de comandos */
-         for (int i = 0; i < NUMCOMMANDS; ++i) {
-            int numBytes = strlen(commands[i]);
-
-            /* Escreve no socket do cliente o tamanho (em bytes) do commando */
-            sock::Write(connfd, (char *) &numBytes, sizeof(int));
-            
-            /* Escreve no socket do cliente os bytes do comando */
-            sock::Write(connfd, commands[i], strlen(commands[i]));
-
-            /* Verifica se não é o último comando (EXIT), onde não é
-               necessário realizar leitura vinda do cliente 
-            */
-            if (i + 1 != NUMCOMMANDS) {
-               /* Lê os bytes que o cliente escreveu no socket */
-               int numBytes = sock::ReadSocket(connfd, recvline, MAXLINE);
-
-               /* Verfica se os dados do cliente (IP e porta) são válidos, assim como os bytes lidos */
-               if (user_data != NULL && numBytes > 0) {
-                  // printf("Resultado retornado pelo cliente %s para o comando `%s`:\n%s\n", user_data, commands[i], recvline);
-
-                  message = "***************************************\nResultado retornado pelo cliente " + std::string(user_data) + " para o comando: '" + std::string(commands[i]) + "'\n\n" + std::string(recvline);
-
-                  /* Lemos estes bytes para o buffer recvline */
-                  if (fwrite(message.c_str(), sizeof(char), message.size(), fp) != (size_t) message.size()) {
-                     perror("read error");
-                     exit(1);
-                  }
-               }
-               
-               fflush(stdout);
-
-               sleep(4); /* pausa a execução do programa por 4 segundos */
-            }
-         }
-
-         sock::Close(connfd); /* fecha a conexão com o cliente */
-
-         /* obtem o horário do servidor */
-         ticks = time(NULL);
-
-         /*
-            escreve o horário do servidor no buffer 'buf', utilizando a formatação "%.24s\r\n"
-         */
-         snprintf(buf, sizeof(buf), "%.24s\r\n", ctime(&ticks));
-
-         /* printa num arquivo o fim da conexão com o cliente, assim com o horário em que a mesma ocorreu */
-         message = "***************************************\nFim da conexão com cliente " + std::string(user_data) + ": " + std::string(buf);
-
-         /* Lemos estes bytes para o buffer recvline */
-         if (fwrite(message.c_str(), sizeof(char), message.size(), fp) != (size_t) message.size()) {
-            perror("read error");
-            exit(1);
-         }
-
-         exit(0); /* processo filho termina */
+      if ((connfd = accept(listenfd, (struct sockaddr *) NULL, NULL)) == -1 ) {
+         perror("accept");
+         exit(1);
       }
 
-      /* printa os ids dos processos pai e filho */
-      // printf("Child PID = %d (Parent PID = %d)\n", pid, getpid());
+      char userip[16];
+      struct sockaddr_in user_addr;
 
-      sock::Close(connfd); /* fecha o socket que foi conectado com o cliente (aqui o processo pai executa) */
+      /* tomamos a quantidade de bytes ocupados pela estrtura user_addr */
+      socklen_t size_addr = sizeof(user_addr);
 
-      ++userId; /* atualiza o número de usuários atendidos */
+      /* tomamos a quantidade de bytes ocupados pela estrtura user_addr */
+      bzero(&user_addr, sizeof(user_addr));
+
+      /*
+         getpeername() retorna o endereço do par conectado ao socket connfd. 
+         Tal valor retornado é armazenado na estrutura 'user_addr'. Assim,
+         somos capazes de capturar o IP e a porta de requisição TCP feita
+         pelo cliente.
+      */
+      getpeername(
+         connfd,
+         (struct sockaddr*) &user_addr,
+         &size_addr
+      );
+
+      /*
+         convertemos `user_addr.sin_addr` de um valor binário para uma
+         string no padrão IPv4
+      */
+      inet_ntop(AF_INET, &user_addr.sin_addr, userip, sizeof(userip));
+
+      /* 
+         converte a ordem do inteiro representando a porta do cliente, 
+         do padrão usado na rede (big-endian) para o padrão 
+         usado no host (little-endian)
+      */
+      unsigned int user_port = ntohs(user_addr.sin_port);
+
+      printf("(IP do cliente = %s, Porta do cliente =%d)\n", userip, (int) user_port);
+
+      /* obtem o horário do servidor */
+      ticks = time(NULL);
+      
+      /*
+         escreve o horário do servidor no buffer 'buf', utilizando a formatação "%.24s\r\n"
+      */
+      snprintf(buf, sizeof(buf), "%.24s\r\n", ctime(&ticks));
+
+      /*
+         escreve o buffer `buf` no socket connfd conectado com o cliente, para que o
+         possa receber o horário obtido pelo servidor
+      */
+      int ret = write(connfd, buf, strlen(buf));
+
+      /* verifica se houve algum erro com a escrita do buffer no socket descriptor */
+      if (!ret) {
+         printf("Something went wrong\n");
+          
+         exit(1);
+      }
+
+      /* 
+         Quando chamamos a syscall close(), começamos a sequência padrão para término da conexão TCP.
+         Um FIN é enviado para cada direção e cada FIN é reconhecido pelos extremos (servidor e cliente)
+         para que assim a conexão seja de fato terminada.
+      */
+      close(connfd);
    }
    
-   return 0;
+   return(0);
 }
